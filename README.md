@@ -32,6 +32,10 @@ XiaoAI LLM Redirect is an LSPosed module that redirects LLM requests from XiaoAI
 4. Save the settings, force-stop XiaoAI, and start it again.
 5. Search the LSPosed logs for `XiaoaiLLM` and verify that the expected hooks loaded.
 
+## Releases
+
+Signed APKs are available from [GitHub Releases](../../releases).
+
 ## Configuration
 
 | Setting | Description |

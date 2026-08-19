@@ -1,0 +1,157 @@
+name: Build and release APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version_name="${GITHUB_REF_NAME#v}"
+          else
+            version_name="dev-${GITHUB_SHA::7}"
+          fi
+
+          echo "VERSION_NAME=$version_name" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "APK_NAME=xiaoai-llm-redirect-$version_name.apk" >> "$GITHUB_ENV"
+
+      - name: Validate signing secrets
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required repository secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Compile and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$ANDROID_SDK_ROOT/build-tools/34.0.0"
+          android_jar="$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
+
+          rm -rf build
+          mkdir -p build/classes build/dex build/test-classes
+
+          "$build_tools/aapt2" link \
+            -o build/base.apk \
+            -I "$android_jar" \
+            --manifest AndroidManifest.xml \
+            -A assets \
+            --min-sdk-version 21 \
+            --target-sdk-version 23 \
+            --version-code "$VERSION_CODE" \
+            --version-name "$VERSION_NAME" \
+            --auto-add-overlay
+
+          mapfile -d '' java_sources < <(find stubs src -name '*.java' -print0)
+          javac \
+            -source 8 -target 8 \
+            -bootclasspath "$android_jar" \
+            -classpath stubs \
+            -d build/classes \
+            -encoding UTF-8 \
+            "${java_sources[@]}"
+
+          javac \
+            -source 8 -target 8 \
+            -classpath build/classes \
+            -d build/test-classes \
+            -encoding UTF-8 \
+            tests/com/xiaoai/llmredirect/HookEntryModelRoutingTest.java
+          java -classpath build/classes:build/test-classes \
+            com.xiaoai.llmredirect.HookEntryModelRoutingTest
+
+          find build/classes/com/xiaoai -name '*.class' -print | sort > build/d8args.txt
+          "$build_tools/d8" --release \
+            --lib "$android_jar" \
+            --classpath build/classes \
+            --output build/dex \
+            @build/d8args.txt
+
+          jar -uf build/base.apk -C build/dex classes.dex
+          "$build_tools/zipalign" -f 4 build/base.apk build/aligned.apk
+
+      - name: Sign and verify APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          build_tools="$ANDROID_SDK_ROOT/build-tools/34.0.0"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > build/release.keystore
+
+          "$build_tools/apksigner" sign \
+            --ks build/release.keystore \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "build/$APK_NAME" \
+            build/aligned.apk
+
+          "$build_tools/apksigner" verify --verbose --print-certs "build/$APK_NAME"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: build/${{ env.APK_NAME }}
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "build/$APK_NAME" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "build/$APK_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi

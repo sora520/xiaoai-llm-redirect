@@ -32,6 +32,10 @@ XiaoAI LLM Redirect 是一个用于小爱同学的 LSPosed 模块，可将内置
 4. 保存配置后强制停止小爱同学，再重新启动。
 5. 在 LSPosed 日志中搜索 `XiaoaiLLM`，确认预期的 Hook 点已加载。
 
+## 发布
+
+已签名 APK 可从 [GitHub Releases](../../releases) 下载。
+
 ## 配置
 
 | 配置 | 说明 |
