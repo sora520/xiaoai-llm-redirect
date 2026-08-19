@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.xiaoai.llmredirect">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="23" />
+
+    <application
+        android:label="小爱LLM重定向"
+        android:allowBackup="false">
+
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="重定向小爱同学(OSBot Agent)的大模型 API 到自定义 OpenAI 兼容后端" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+
+        <activity android:name=".ConfigActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

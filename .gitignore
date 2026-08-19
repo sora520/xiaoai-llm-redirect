@@ -1,0 +1,10 @@
+/build/
+/build.sh
+/debug.keystore
+*.apk
+*.idsig
+*.class
+*.log
+.idea/
+*.iml
+local.properties
